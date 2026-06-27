@@ -1,230 +1,286 @@
 import { useState, useEffect } from 'react';
 import { supabase } from './supabaseClient';
+import { styles } from './styles';
 
 export default function App() {
-  const [session, setSession] = useState<any>(null);
-  const [loading, setLoading] = useState(false);
-  
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [fullName, setFullName] = useState('');
+  // Estados de navegación e interfaz
+  const [view, setView] = useState<'landing' | 'login' | 'register' | 'dashboard'>('landing');
+  const [user, setUser] = useState<any>(null);
   const [profile, setProfile] = useState<any>(null);
 
+  // Estados de los formularios de acceso
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [username, setUsername] = useState('');
+
+  // NUEVOS ESTADOS: Presupuesto y Gestión de Productos
+  const [budget, setBudget] = useState<number>(0);
+  const [isEditingBudget, setIsEditingBudget] = useState(false);
+  const [tempBudget, setTempBudget] = useState('');
+
+  // Estados de carga y mensajes
+  const [loading, setLoading] = useState(false);
+  const [message, setMessage] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
+
+  // Escuchar la sesión de Supabase
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session);
+      if (session) {
+        setUser(session.user);
+        fetchProfile(session.user.id);
+        setView('dashboard');
+      }
     });
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      setSession(session);
+      if (session) {
+        setUser(session.user);
+        fetchProfile(session.user.id);
+        setView('dashboard');
+      } else {
+        setUser(null);
+        setProfile(null);
+        setView('landing');
+      }
     });
 
     return () => subscription.unsubscribe();
   }, []);
 
-  useEffect(() => {
-    if (session?.user) {
-      fetchUserProfile(session.user.id);
-    } else {
-      setProfile(null);
+  // Cargar perfil y el presupuesto guardado (si existe en tu tabla de perfiles)
+  const fetchProfile = async (userId: string) => {
+    try {
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', userId)
+        .single();
+      
+      if (error) throw error;
+      setProfile(data);
+      if (data?.budget) {
+        setBudget(data.budget);
+      }
+    } catch (err) {
+      console.error("Error cargando perfil:", err);
     }
-  }, [session]);
+  };
 
-  async function fetchUserProfile(userId: string) {
-    const { data, error } = await supabase
-      .from('profiles')
-      .select('*')
-      .eq('id', userId)
-      .single();
-    if (!error) setProfile(data);
-  }
+  // Guardar el presupuesto en la base de datos de manera privada
+  const handleSaveBudget = async () => {
+    const parsedBudget = parseFloat(tempBudget);
+    if (isNaN(parsedBudget) || parsedBudget < 0) return;
 
-  // 1. REGISTRO (Botón Verde)
-  async function handleSignUp() {
-    if (!email || !password || !fullName) {
-      alert('Faltan datos obligatorios para el registro.');
-      return;
+    try {
+      const { error } = await supabase
+        .from('profiles')
+        .update({ budget: parsedBudget })
+        .eq('id', user.id);
+
+      if (error) throw error;
+      setBudget(parsedBudget);
+      setIsEditingBudget(false);
+    } catch (err) {
+      console.error("Error al guardar presupuesto:", err);
     }
-    
+  };
+
+  const handleLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
     setLoading(true);
+    setMessage(null);
+    try {
+      const { error } = await supabase.auth.signInWithPassword({ email, password });
+      if (error) throw error;
+    } catch (err: any) {
+      setMessage({ text: err.message || 'Error al iniciar sesión', type: 'error' });
+    } finally {
+      setLoading(false);
+    }
+  };
 
-    // Paso A: Registrar en Supabase Auth (Ya no dará error 500 porque quitamos el trigger)
-    const { data, error: authError } = await supabase.auth.signUp({
+  const handleRegister = async (e: React.FormEvent) => {
+  e.preventDefault();
+  setLoading(true);
+  setMessage(null);
+  
+  try {
+    const { data: authData, error: authError } = await supabase.auth.signUp({
       email,
-      password
+      password,
+      options: {
+        data: {
+          full_name: username, // Al usar 'full_name', Supabase llena la columna "Display name"
+        }
+      }
     });
 
-    if (authError) {
-      alert('Error de Autenticación: ' + authError.message);
-      setLoading(false);
-      return;
-    }
-
-    // Paso B: Si el usuario se creó en Auth, creamos manualmente su fila en profiles
-    if (data?.user) {
-      const { error: profileError } = await supabase
-        .from('profiles')
-        .insert([
-          { 
-            id: data.user.id, // Enlazamos usando el UUID idéntico de Auth
-            username: fullName,
-            household_id: null
-          }
-        ]);
-
-      if (profileError) {
-        console.error("Error al crear el perfil público:", profileError.message);
-        alert('Usuario autenticado, pero hubo un detalle con su perfil: ' + profileError.message);
-      } else {
-        alert('¡Usuario y perfil registrados con éxito! Ya puedes iniciar sesión.');
-        setPassword('');
-      }
-    }
-
-    setLoading(false);
-  }
-
-  // 2. INICIO DE SESIÓN (Botón Morado)
-  async function handleLogin() {
-    // Alerta de rastreo para confirmar qué función se activó
-    alert(`[RASTREO] Ejecutando: handleLogin.\nCorreo: "${email}"`);
+    if (authError) throw authError;
     
-    if (!email || !password) {
-      alert('Por favor ingresa correo y contraseña para iniciar sesión.');
-      return;
-    }
-    
-    setLoading(true);
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
-    if (error) alert('Error al ingresar: ' + error.message);
+    setMessage({ text: '¡Registro exitoso! Ya puedes iniciar sesión.', type: 'success' });
+    setView('login');
+    setUsername('');
+  } catch (err: any) {
+    setMessage({ text: err.message || 'Error al registrar', type: 'error' });
+  } finally {
     setLoading(false);
   }
+};
 
-  async function handleUpdateProfile(e: React.FormEvent) {
-    e.preventDefault();
-    if (!session?.user || !fullName) return;
-    setLoading(true);
-
-    const { error } = await supabase
-      .from('profiles')
-      .update({ username: fullName })
-      .eq('id', session.user.id);
-
-    if (error) {
-      alert('Error al actualizar: ' + error.message);
-    } else {
-      alert('¡Nombre de perfil actualizado con éxito!');
-      fetchUserProfile(session.user.id);
-    }
-    setLoading(false);
-  }
-
-  if (!session) {
-    return (
-      <div style={styles.container}>
-        <h2 style={{ textAlign: 'center' }}>Kitchen Intelligence - Acceso 🔐</h2>
-        <div style={styles.cardForm}>
-          <div style={{ marginBottom: '15px' }}>
-            <label style={styles.label}>Nombre Completo (Solo para registrarse):</label>
-            <input 
-              type="text" 
-              placeholder="Ej. Juan Pérez" 
-              value={fullName} 
-              onChange={(e) => setFullName(e.target.value)} 
-              style={styles.input}
-            />
-          </div>
-          <div style={{ marginBottom: '15px' }}>
-            <label style={styles.label}>Correo Electrónico:</label>
-            <input 
-              type="email" 
-              placeholder="correo@ejemplo.com" 
-              value={email} 
-              onChange={(e) => setEmail(e.target.value)} 
-              style={styles.input}
-            />
-          </div>
-          <div style={{ marginBottom: '20px' }}>
-            <label style={styles.label}>Contraseña (Mínimo 6 caracteres):</label>
-            <input 
-              type="password" 
-              placeholder="******" 
-              value={password} 
-              onChange={(e) => setPassword(e.target.value)} 
-              style={styles.input}
-            />
-          </div>
-          
-          <div style={{ display: 'flex', gap: '10px' }}>
-            <button 
-              type="button" 
-              onClick={() => handleLogin()} 
-              disabled={loading} 
-              style={styles.btnPrimary}
-            >
-              {loading ? 'Cargando...' : 'Iniciar Sesión'}
-            </button>
-            
-            <button 
-              type="button" 
-              onClick={() => handleSignUp()} 
-              disabled={loading} 
-              style={styles.btnSecondary}
-            >
-              Registrarse
-            </button>
-          </div>
-        </div>
-      </div>
-    );
-  }
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
+    setEmail('');
+    setPassword('');
+    setBudget(0);
+    setView('landing');
+  };
 
   return (
     <div style={styles.container}>
-      <h2>Bienvenido a tu Cuenta 👋</h2>
-      {profile ? (
-        <div style={styles.profileBox}>
-          <h3>Datos de tu sesión segura (READ):</h3>
-          <p><strong>Tu ID único (UUID):</strong> <span style={{ fontSize: '12px', color: '#555' }}>{profile.id}</span></p>
-          <p><strong>Nombre en Perfil:</strong> {profile.username || 'Sin nombre'}</p>
-          <p><strong>Hogar Asociado:</strong> {profile.household_id || 'Ninguno de momento'}</p>
+      <header style={styles.header}>
+        <div style={styles.logo} onClick={() => view !== 'dashboard' && setView('landing')}>
+          💰 SmartBuyer
         </div>
-      ) : (
-        <p>Cargando datos del perfil...</p>
-      )}
+        {view === 'dashboard' && (
+          <button style={styles.logoutBtn} onClick={handleLogout}>Cerrar Sesión</button>
+        )}
+      </header>
 
-      <form onSubmit={handleUpdateProfile} style={styles.cardForm}>
-        <h3>Modificar mis Datos (UPDATE)</h3>
-        <div style={{ marginBottom: '15px' }}>
-          <label style={styles.label}>Nuevo Nombre Completo:</label>
-          <input 
-            type="text" 
-            placeholder="Cambiar tu nombre" 
-            value={fullName} 
-            onChange={(e) => setFullName(e.target.value)} 
-            style={styles.input}
-            required
-          />
-        </div>
-        <button type="submit" disabled={loading} style={styles.btnPrimary}>
-          {loading ? 'Actualizando...' : 'Guardar Cambios'}
-        </button>
-      </form>
+      <main style={styles.main}>
+        {/* VISTA 1: LANDING PAGE ADAPTADA */}
+        {view === 'landing' && (
+          <div style={styles.landingWrapper}>
+            <h1 style={styles.heroTitle}>Tus compras habituales, optimizadas para tu bolsillo</h1>
+            <p style={styles.heroSubtitle}>
+              Define tu presupuesto disponible y recibe sugerencias inteligentes de compra para los productos que ya consumes día con día. Tu información es 100% privada.
+            </p>
+            <div style={styles.btnGroup}>
+              <button style={styles.primaryBtn} onClick={() => setView('login')}>Iniciar Sesión</button>
+              <button style={styles.secondaryBtn} onClick={() => setView('register')}>Registrarse</button>
+            </div>
+          </div>
+        )}
 
-      <button onClick={() => supabase.auth.signOut()} style={styles.btnDanger}>
-        Cerrar Sesión
-      </button>
+        {/* VISTA 2: LOGIN */}
+        {view === 'login' && (
+          <div style={styles.card}>
+            <h2 style={styles.cardTitle}>Iniciar Sesión</h2>
+            <p style={styles.cardSubtitle}>Ingresa para gestionar tu presupuesto de forma privada.</p>
+            {message && <div style={message.type === 'success' ? styles.successBox : styles.errorBox}>{message.text}</div>}
+            <form onSubmit={handleLogin} style={styles.form}>
+              <div style={styles.formGroup}>
+                <label style={styles.label}>Correo Electrónico</label>
+                <input type="email" style={styles.input} placeholder="ejemplo@correo.com" value={email} onChange={(e) => setEmail(e.target.value)} required />
+              </div>
+              <div style={styles.formGroup}>
+                <label style={styles.label}>Contraseña</label>
+                <input type="password" style={styles.input} placeholder="••••••••" value={password} onChange={(e) => setPassword(e.target.value)} required />
+              </div>
+              <button type="submit" style={styles.submitBtn} disabled={loading}>{loading ? 'Accediendo...' : 'Entrar'}</button>
+            </form>
+            <p style={styles.switchText}>¿No tienes una cuenta? <span style={styles.switchLink} onClick={() => { setView('register'); setMessage(null); }}>Regístrate aquí</span></p>
+          </div>
+        )}
+
+        {/* VISTA 3: REGISTRO */}
+        {view === 'register' && (
+          <div style={styles.card}>
+            <h2 style={styles.cardTitle}>Crear Cuenta Privada</h2>
+            <p style={styles.cardSubtitle}>Regístrate para comenzar a optimizar tus gastos de consumo.</p>
+            {message && <div style={message.type === 'success' ? styles.successBox : styles.errorBox}>{message.text}</div>}
+            <form onSubmit={handleRegister} style={styles.form}>
+              <div style={styles.formGroup}>
+                <label style={styles.label}>Nombre de Usuario</label>
+                <input type="text" style={styles.input} placeholder="Ej: hector_pv" value={username} onChange={(e) => setUsername(e.target.value)} required />
+              </div>
+              <div style={styles.formGroup}>
+                <label style={styles.label}>Correo Electrónico</label>
+                <input type="email" style={styles.input} placeholder="ejemplo@correo.com" value={email} onChange={(e) => setEmail(e.target.value)} required />
+              </div>
+              <div style={styles.formGroup}>
+                <label style={styles.label}>Contraseña</label>
+                <input type="password" style={styles.input} placeholder="Mínimo 6 caracteres" value={password} onChange={(e) => setPassword(e.target.value)} required />
+              </div>
+              <button type="submit" style={styles.submitBtn} disabled={loading}>{loading ? 'Registrando...' : 'Registrarse'}</button>
+            </form>
+            <p style={styles.switchText}>¿Ya tienes cuenta? <span style={styles.switchLink} onClick={() => { setView('login'); setMessage(null); }}>Inicia sesión aquí</span></p>
+          </div>
+        )}
+
+        {/* VISTA 4: PANEL DE CONTROL */}
+        {view === 'dashboard' && (
+          <div style={styles.dashboard}>
+            <div style={styles.welcomeBanner}>
+              <h2>
+                Panel Privado: <span style={styles.accentText}>{profile?.username || user?.user_metadata?.full_name || 'Usuario'}</span>
+              </h2>
+              <p>Gestiona tus recursos y analiza las sugerencias de compra inteligentes.</p>
+            </div>
+
+            {/* SECCIÓN DE PRESUPUESTO */}
+            <div style={styles.budgetSection}>
+              {isEditingBudget ? (
+                <div style={styles.budgetEditRow}>
+                  <input
+                    type="number"
+                    style={styles.inputBudget}
+                    placeholder="Introduce tu presupuesto (ingresos)"
+                    value={tempBudget}
+                    onChange={(e) => setTempBudget(e.target.value)}
+                  />
+                  <button style={styles.saveBudgetBtn} onClick={handleSaveBudget}>Guardar</button>
+                  <button style={styles.cancelBudgetBtn} onClick={() => setIsEditingBudget(false)}>Cancelar</button>
+                </div>
+              ) : (
+                <div style={styles.budgetDisplayRow}>
+                  <div>
+                    <span style={styles.budgetLabel}>Tu Presupuesto Mensual Asignado:</span>
+                    <span style={styles.budgetValue}> ${budget.toLocaleString('es-MX')}</span>
+                  </div>
+                  <button style={styles.editBudgetBtn} onClick={() => { setTempBudget(budget.toString()); setIsEditingBudget(true); }}>
+                    {budget === 0 ? 'Asignar Presupuesto' : 'Modificar'}
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* GRID DE MÉTRICAS NUEVAS */}
+            <div style={styles.grid}>
+              <div style={styles.dashboardCard}>
+                <div style={styles.cardHeaderIcon}>🛒</div>
+                <h3>Tus Productos Frecuentes</h3>
+                <p style={styles.metric}>8 Artículos</p>
+                <span style={styles.metricSub}>Monitoreados en tiempo real</span>
+              </div>
+
+              <div style={styles.dashboardCard}>
+                <div style={styles.cardHeaderIcon}>💡</div>
+                <h3>Sugerencias de Optimización</h3>
+                <p style={styles.metric}>3 Alertas</p>
+                <span style={styles.metricSub}>Opciones con mejor relación calidad/precio</span>
+              </div>
+
+              <div style={styles.dashboardCard}>
+                <div style={styles.cardHeaderIcon}>📉</div>
+                <h3>Ahorro Estimado</h3>
+                <p style={styles.metric}>15.2%</p>
+                <span style={styles.metricSub}>Proyección si aplicas las sugerencias</span>
+              </div>
+            </div>
+
+            {/* PANEL DE SUGERENCIAS SIMULADAS */}
+            <div style={styles.suggestionsBox}>
+              <h3 style={{ marginBottom: '15px' }}>⚡ Sugerencias de compra personalizadas</h3>
+              <div style={styles.suggestionItem}>
+                <strong>Artículos de despensa básica:</strong> Detectamos que el Supermercado B tiene un descuento del 10% por volumen en los productos de limpieza que ya usas con frecuencia.
+              </div>
+              <div style={styles.suggestionItem}>
+                <strong>Sustitución inteligente:</strong> El café de la marca X (que está en tu lista habitual) tiene una alternativa premium local con un precio 20% menor este mes.
+              </div>
+            </div>
+          </div>
+        )}
+      </main>
     </div>
   );
 }
-
-const styles = {
-  container: { padding: '30px', fontFamily: 'Segoe UI, sans-serif', maxWidth: '480px', margin: '40px auto' },
-  cardForm: { border: '1px solid #e5e7eb', padding: '20px', borderRadius: '8px', backgroundColor: '#ffffff', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.1)' },
-  label: { display: 'block', fontSize: '14px', fontWeight: 'bold', marginBottom: '6px', color: '#374151' },
-  input: { width: '100%', padding: '10px', fontSize: '15px', borderRadius: '6px', border: '1px solid #d1d5db', boxSizing: 'box-sizing' as any },
-  profileBox: { padding: '15px', backgroundColor: '#f3f4f6', borderRadius: '8px', marginBottom: '25px', borderLeft: '4px solid #4F46E5' },
-  btnPrimary: { flex: 1, padding: '11px', backgroundColor: '#4F46E5', color: 'white', border: 'none', borderRadius: '6px', fontSize: '15px', fontWeight: 'bold' as any, cursor: 'pointer' },
-  btnSecondary: { flex: 1, padding: '11px', backgroundColor: '#10B981', color: 'white', border: 'none', borderRadius: '6px', fontSize: '15px', fontWeight: 'bold' as any, cursor: 'pointer' },
-  btnDanger: { width: '100%', padding: '11px', backgroundColor: '#EF4444', color: 'white', border: 'none', borderRadius: '6px', fontSize: '15px', fontWeight: 'bold' as any, cursor: 'pointer', marginTop: '15px' }
-};
