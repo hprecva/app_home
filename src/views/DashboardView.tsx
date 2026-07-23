@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabaseClient';
+import { ProductManager } from '../components/ProductManager';
 
 interface DashboardViewProps {
   session: any;
@@ -49,7 +50,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ session }) => {
         </button>
       </header>
 
-      {/* Banner Principal */}
+      {/* Banner Principal y Módulos */}
       <main style={styles.mainContent}>
         <div style={styles.welcomeBanner}>
           <h2>
@@ -63,17 +64,10 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ session }) => {
           </p>
         </div>
 
-        {/* CONTENEDOR FUTURO: Aquí importarás e inyectarás tus nuevos sub-componentes modulares */}
-        <div style={styles.placeholderGrid}>
-          <div style={styles.placeholderCard}>
-            <h3>Módulo de Presupuestos</h3>
-            <p style={{ color: '#64748b' }}>Próximamente: Historial de saldos y remanentes acumulados.</p>
-          </div>
-          <div style={styles.placeholderCard}>
-            <h3>Historial de Productos</h3>
-            <p style={{ color: '#64748b' }}>Próximamente: Gráficos de tendencias e historial de precios.</p>
-          </div>
-        </div>
+        {/* INYECCIÓN DEL MÓDULO DE PRODUCTOS */}
+        <section style={styles.moduleSection}>
+          <ProductManager />
+        </section>
       </main>
     </div>
   );
@@ -90,6 +84,5 @@ const styles = {
   welcomeBanner: { background: 'linear-gradient(135deg, #1e293b 0%, #0f172a 100%)', padding: '30px', borderRadius: '12px', border: '1px solid #334155' },
   accentText: { color: '#38bdf8' },
   bannerSubtitle: { color: '#94a3b8', margin: '10px 0 0 0', fontSize: '16px' },
-  placeholderGrid: { display: 'flex', gap: '20px', flexWrap: 'wrap' as const },
-  placeholderCard: { flex: 1, minWidth: '280px', background: '#1e293b', padding: '25px', borderRadius: '12px', border: '1px solid #334155' }
+  moduleSection: { width: '100%' }
 };
